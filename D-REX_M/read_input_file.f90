@@ -112,7 +112,9 @@
    call read_par_int(15,OutputStep)
    call read_par_double(15,timemax)
    !call read_par_double(15,strainmax)
-   strainmax = 5.0d1
+   !call read_par_int(15,strainmax)
+   strainmax = 5.0d0
+   ncycmax = 50000
    if ( rankMPI .eq. 1 ) then
       write(*,"(a,i5)") ' Tinit :      ',Tinit
       write(*,"(a,i5)") ' Tstep :      ',Tstep

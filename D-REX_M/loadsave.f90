@@ -46,7 +46,10 @@
 !!! Loading hdf5 files                                                     !!!
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-   SUBROUTINE load(t,input_dir)
+   !loadmode = 0 --> load velocity field
+   !loadmode = 1 --> load P-T fields
+   !loadmode = 2 --> load all fields
+   SUBROUTINE load(loadmode,t,input_dir)
 
    USE comvar
    use omp_lib
@@ -58,15 +61,14 @@
    include 'mpif.h'
    !M3E!!!!!!!!!!!!
 
-   INTEGER :: i1,i2,i3,i4,t,yy
-!  INTEGER :: n1,n2,n3,nx(3) ! unused
+   INTEGER :: i1,i2,i3,i4,t,yy,loadmode
    CHARACTER (4) :: dt_str4
    CHARACTER (500) :: filename,str
    CHARACTER (len=*) :: input_dir
    CHARACTER (len(trim(input_dir))) :: str1  
    DOUBLE PRECISION, DIMENSION(2,2) :: Adummy2,dV2
    DOUBLE PRECISION, DIMENSION(3,3) :: Adummy,dV
-   DOUBLE PRECISION :: datadb(2),lr,rr,cr,x2y2,x2z2,xx,yyy,zz,Uxx(3)
+   DOUBLE PRECISION :: datadb(2),lr,rr,cr,x2y2,x2z2,xx,yyy,zz,Uxx(3),vxx,vyy,vzz,koef1,koef2
 !  DOUBLE PRECISION :: dum,sii,sigmin,sigmax ! unused
    DOUBLE PRECISION ,DIMENSION(:), ALLOCATABLE :: V1,V2,V3,Fd0,Tk0,Pa0
    INTEGER(HID_T)  :: file_id !Handles
@@ -129,24 +131,26 @@
  
    !Load velocity field
    yy = yinyang
-   ALLOCATE(V1(nodenum*yy),V2(nodenum*yy))
-   dims1D = nodenum*yy
-   CALL loadsave_double(0,1,file_id,dims1D,H5T_NATIVE_DOUBLE,V1,'Nodes/V1',0)!Vx/VPhi
-   CALL loadsave_double(0,1,file_id,dims1D,H5T_NATIVE_DOUBLE,V2,'Nodes/V2',0)!Vy/Vradial
-   IF(dimensions == 3) THEN
-      ALLOCATE(V3(nodenum*yy))
-      CALL loadsave_double(0,1,file_id,dims1D,H5T_NATIVE_DOUBLE,V3,'Nodes/V3',0)!Vz/Vcolat 
+   IF(loadmode .NE. 1) THEN
+      ALLOCATE(V1(nodenum*yy),V2(nodenum*yy))
+      dims1D = nodenum*yy
+      CALL loadsave_double(0,1,file_id,dims1D,H5T_NATIVE_DOUBLE,V1,'Nodes/V1',0)!Vx/VPhi
+      CALL loadsave_double(0,1,file_id,dims1D,H5T_NATIVE_DOUBLE,V2,'Nodes/V2',0)!Vy/Vradial
+      IF(dimensions == 3) THEN
+         ALLOCATE(V3(nodenum*yy))
+         CALL loadsave_double(0,1,file_id,dims1D,H5T_NATIVE_DOUBLE,V3,'Nodes/V3',0)!Vz/Vcolat 
+      END IF
    END IF
 
    !Load temperature and pressure
-   IF(ptmod > 0) THEN 
+   IF(ptmod > 0 .AND. loadmode > 0) THEN 
       ALLOCATE(Tk0(nodenum*yy),Pa0(nodenum*yy)) 
       CALL loadsave_double(0,1,file_id,dims1D,H5T_NATIVE_DOUBLE,Tk0,'Nodes/Tk',0)
       CALL loadsave_double(0,1,file_id,dims1D,H5T_NATIVE_DOUBLE,Pa0,'Nodes/P',0)
    END IF
 
    !Load fraction of deformation accommodated by dislocation creep
-   IF(fractdislmod > 0) THEN 
+   IF(fractdislmod > 0 .AND. loadmode > 1) THEN 
       ALLOCATE(Fd0(nodenum*yy))
       CALL loadsave_double(0,1,file_id,dims1D,H5T_NATIVE_DOUBLE,Fd0,'Nodes/Fd',0)
    END IF
@@ -173,18 +177,20 @@
          !Global index
          i4 = nodenum*(yy-1) + i2 + (i1-1)*nx2 + (i3-1)*nx1*nx2
 
-         Ui(yy,1,i1,i2,i3)=V1(i4)
-         Ui(yy,2,i1,i2,i3)=V2(i4)
-         IF(dimensions == 3) Ui(yy,3,i1,i2,i3)=V3(i4)
+         IF(loadmode .NE. 1) THEN
+            Ui(yy,1,i1,i2,i3)=V1(i4)
+            Ui(yy,2,i1,i2,i3)=V2(i4)
+            IF(dimensions == 3) Ui(yy,3,i1,i2,i3)=V3(i4)
+         END IF
 
-         IF(ptmod > 0) THEN
+         IF(ptmod > 0 .AND. loadmode > 0) THEN
             if(Tk0(i4) < 0.0) Tk0(i4) = 0.0
             Tk(yy,i1,i2,i3) = Tk0(i4)
             if(Pa0(i4) < 0.0) Pa0(i4) = 0.0
             Pa(yy,i1,i2,i3) = Pa0(i4)
          END IF
 
-         IF(fractdislmod > 0) THEN
+         IF(fractdislmod > 0 .AND. loadmode > 1) THEN
             Fd(yy,i1,i2,i3) = Fd0(i4)
             IF(Fd(yy,i1,i2,i3)<0.0) write(*,"(a,i4,i4,i4,f6.3)") 'Fraction of disl. creep < 0 at node ',i1,i2,i3,Fd(yy,i1,i2,i3)
             IF(Fd(yy,i1,i2,i3)>1.0) write(*,"(a,i4,i4,i4,f6.3)") 'Fraction of disl. creep > 1 at node ',i1,i2,i3,Fd(yy,i1,i2,i3)
@@ -197,10 +203,15 @@
 
    END DO
 
-   DEALLOCATE(V1,V2)
-   IF(dimensions == 3) DEALLOCATE(V3)
-   IF(ptmod > 0) DEALLOCATE(Tk0,Pa0)
-   IF(fractdislmod > 0) DEALLOCATE(Fd0)
+   IF(loadmode .NE. 1) THEN
+      DEALLOCATE(V1,V2)
+      IF(dimensions == 3) DEALLOCATE(V3)
+   END IF
+   IF(ptmod > 0 .AND. loadmode > 0) DEALLOCATE(Tk0,Pa0)
+   IF(fractdislmod > 0 .AND. loadmode > 1) DEALLOCATE(Fd0)
+
+   !Return after loading initial P-T fields
+   IF(loadmode == 1) RETURN
 
    IF(cartspher == 1) Ux = Ui
    
@@ -231,6 +242,8 @@
    END DO
 
    END IF
+
+   IF(loadmode > 0) THEN
 
 !!! Velocity gradient tensor
    Dij = 0d0
@@ -341,6 +354,8 @@
    END DO
    !$omp end parallel do
 
+   END IF
+
 !!! Convert Vlong from m/s to rad/s for advection
    IF(cartspher == 2) THEN
 
@@ -372,10 +387,35 @@
 
    DO yy = 1, yinyang
 
+!!! Convert Vcolat and Vphi of Yang grid from Yin to Yang grid coordinate system    
+   if(yy == 2) then
+
+   !$omp parallel do & 
+   !$omp schedule(dynamic) &
+   !$omp shared(Ui) &
+   !$omp private(i1,i2,i3,lr,cr,vxx,vzz,koef1,koef2) &    
+   !$omp firstprivate(nx1,nx2,nx3,X1,X3,yy)
+   DO i1 = 1, nx1   
+      DO i2 = 1, nx2    
+         DO i3 = 1, nx3    
+            CALL yin2yang(X1(i1),X3(i3),lr,cr)
+            koef1 = -sin(X1(i1))*sin(lr)
+            koef2 =  cos(X1(i1))/sin(cr)
+            vxx = Ui(yy,1,i1,i2,i3)
+            vzz = Ui(yy,3,i1,i2,i3)
+            Ui(yy,1,i1,i2,i3) = koef1*vxx + koef2*vzz
+            Ui(yy,3,i1,i2,i3) = koef1*vzz - koef2*vxx
+         END DO
+      END DO
+   END DO
+   !$omp end parallel do
+
+   end if
+
    !$omp parallel do & 
    !$omp schedule(dynamic) &
    !$omp shared(Ui,Ux) &
-   !$omp private(i1,i2,i3,lr,cr,Adummy) &    
+   !$omp private(i1,i2,i3,lr,cr,Adummy,vxx,vyy,vzz) &    
    !$omp firstprivate(nx1,nx2,nx3,X1,X3,yy)
    DO i1 = 1, nx1
       DO i2 = 1, nx2
@@ -407,6 +447,15 @@
 
          Ux(yy,:,i1,i2,i3) = MATMUL(Adummy,Ui(yy,:,i1,i2,i3))
 
+         IF(yy == 2) THEN
+            vxx = Ux(yy,1,i1,i2,i3) 
+            vyy = Ux(yy,2,i1,i2,i3)
+            vzz = Ux(yy,3,i1,i2,i3)     
+            Ux(yy,1,i1,i2,i3) =-vxx  
+            Ux(yy,2,i1,i2,i3) = vzz           
+            Ux(yy,3,i1,i2,i3) = vyy           
+         END IF
+            
          END DO
       END DO
    END DO
@@ -415,6 +464,8 @@
    END DO
 
    END IF
+
+   IF(loadmode > 0) THEN
 
 !!! Velocity gradient tensor
    Dij = 0d0
@@ -755,11 +806,13 @@
 
    END DO
 
-!!! Convert Vcolat and Vphi from m/s to rad/s for advection
+   END IF
+
    IF(cartspher == 2) THEN
 
    DO yy = 1, yinyang
 
+!!! Convert Vcolat and Vphi from m/s to rad/s for advection
    !$omp parallel do & 
    !$omp schedule(dynamic) &
    !$omp shared(Ui) &
@@ -768,20 +821,12 @@
    DO i1 = 1, nx1   
       DO i2 = 1, nx2    
          DO i3 = 1, nx3    
-            IF(yy == 1) THEN
-               !Vcolat(rad/s) = Vcolat(m/s)/R
-               IF(Ui(yy,3,i1,i2,i3) /= 0) Ui(yy,3,i1,i2,i3)=Ui(yy,3,i1,i2,i3)/X2(i2)               
-               !Vphi(rad/s) = Vphi(m/s)/R/sin(theta)
-               IF(Ui(yy,1,i1,i2,i3) /= 0 .AND. X3(i3) /= 0 .AND. X3(i3) /= pi) THEN
-                  Ui(yy,1,i1,i2,i3)=Ui(yy,1,i1,i2,i3)/X2(i2)/sin(X3(i3))
-               ENDIF
-            ELSE
-               CALL yin2yang(X1(i1),X3(i3),lr,cr)
-               !Vcolat(rad/s) = Vcolat(m/s)/R
-               IF(Ui(yy,3,i1,i2,i3) /= 0) Ui(yy,3,i1,i2,i3)=Ui(yy,3,i1,i2,i3)/X2(i2)               
-               !Vphi(rad/s) = Vphi(m/s)/R/sin(theta)
-               IF(Ui(yy,1,i1,i2,i3) /= 0) Ui(yy,1,i1,i2,i3)=Ui(yy,1,i1,i2,i3)/X2(i2)/sin(cr)        
-            END IF
+            !Vcolat(rad/s) = Vcolat(m/s)/R
+            IF(Ui(yy,3,i1,i2,i3) /= 0) Ui(yy,3,i1,i2,i3)=Ui(yy,3,i1,i2,i3)/X2(i2)               
+            !Vphi(rad/s) = Vphi(m/s)/R/sin(theta)
+            IF(Ui(yy,1,i1,i2,i3) /= 0 .AND. X3(i3) /= 0 .AND. X3(i3) /= pi) THEN
+               Ui(yy,1,i1,i2,i3)=Ui(yy,1,i1,i2,i3)/X2(i2)/sin(X3(i3))
+            ENDIF
          END DO
       END DO
    END DO
@@ -821,11 +866,11 @@
    END IF
 
    IF(Tinit == Tend) THEN
-      numdt = 1
+      numdt = FLOOR(timemax/dt) + 1
       if ( rankMPI .eq. 1 ) then
          write(*,'(a,1es13.6)') ' TOTAL TIMESTEP     = ',dt0
          write(*,*)
-         write(*,'(a,1es13.6,a,i13)') ' ADVECTION TIMESTEP = ',dt,', NUMBER OF CYCLES = ',NINT(timemax/dt)
+         write(*,'(a,1es13.6,a,i13)') ' ADVECTION TIMESTEP = ',dt,', NUMBER OF CYCLES = ',numdt !NINT(timemax/dt)
          write(*,*)
       endif
    ELSE
@@ -2005,102 +2050,3 @@
    end subroutine SaveDatasetMPI_integer
 
 !M3E!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-   SUBROUTINE loadsave_double(data_attr,rank,loc_id,dims,memtype,buf1,path,mode)
-
-   USE hdf5
-
-   IMPLICIT NONE
-
-   CHARACTER(LEN=*), INTENT(IN) :: path
-   INTEGER     ::   rank,dims(rank),data_attr,mode
-   INTEGER(HID_T)  :: loc_id, dataspace_id, dataset_id, attr_id, memtype !Handles
-   INTEGER(HSIZE_T), DIMENSION(1:rank) :: dims1
-   INTEGER     ::   error  ! Error flag
-   DOUBLE PRECISION, DIMENSION(*) :: buf1
-
-   dims1=dims
-   !Dataset
-   IF(data_attr == 0) THEN
-      IF(mode == 0) THEN
-         CALL H5Dopen_f(loc_id, path, dataset_id, error)
-         CALL H5Dread_f(dataset_id, memtype, buf1, dims1, error)
-         CALL H5Dclose_f(dataset_id,error)
-      ELSE
-         CALL H5Screate_simple_f(rank,dims1,dataspace_id,error)
-         CALL H5Dcreate_f(loc_id, path, memtype, dataspace_id, dataset_id,error)
-         CALL H5Dwrite_f (dataset_id, memtype, buf1, dims1, error)
-         CALL H5Dclose_f (dataset_id, error)
-         CALL H5Sclose_f (dataspace_id, error)
-      END IF
-   END IF
-   !Attribute
-   IF(data_attr == 1) THEN
-      IF(mode == 0) THEN
-         CALL H5Aopen_f(loc_id, path, attr_id, error)
-         CALL H5Aread_f(attr_id, memtype, buf1, dims1, error)
-         CALL H5Aclose_f(attr_id, error)
-      ELSE
-         CALL H5Screate_simple_f(rank, dims1, dataspace_id, error)
-         CALL H5Acreate_f(loc_id, path, memtype, dataspace_id, attr_id, error)
-         CALL H5Awrite_f(attr_id, memtype, buf1, dims1, error)
-         CALL H5Aclose_f(attr_id, error)
-         CALL H5Sclose_f(dataspace_id, error)
-      END IF
-   END IF
-
-   RETURN
-
-   END SUBROUTINE loadsave_double
-
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-!!! Load/Save dataset, format integer                                      !!!
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-   SUBROUTINE loadsave_integer(data_attr,rank,loc_id,dims,memtype,buf1,path,mode)
-
-   USE hdf5
-
-   IMPLICIT NONE
-
-   CHARACTER(LEN=*), INTENT(IN) :: path
-   INTEGER     ::   rank,dims(rank),data_attr,mode
-   INTEGER(HID_T)  :: loc_id, dataspace_id, dataset_id, attr_id, memtype !Handles
-   INTEGER(HSIZE_T), DIMENSION(1:rank) :: dims1
-   INTEGER     ::   error  ! Error flag
-   INTEGER, DIMENSION(*) :: buf1
-
-   dims1=dims
-   !Dataset
-   IF(data_attr .EQ. 0) THEN
-      IF(mode .eq. 0) THEN
-         CALL H5Dopen_f(loc_id, path, dataset_id, error)
-         CALL H5Dread_f(dataset_id, memtype, buf1, dims1, error)
-         CALL H5Dclose_f(dataset_id,error)
-      ELSE
-         CALL H5Screate_simple_f(rank,dims1,dataspace_id,error)
-         CALL H5Dcreate_f(loc_id, path, memtype, dataspace_id, dataset_id,error)
-         CALL H5Dwrite_f (dataset_id, memtype, buf1, dims1, error)
-         CALL H5Dclose_f (dataset_id, error)
-         CALL H5Sclose_f (dataspace_id, error)
-      END IF
-   END IF
-   !Attribute
-   IF(data_attr .EQ. 1) THEN
-      IF(mode .eq. 0) THEN
-         CALL H5Aopen_f(loc_id, path, attr_id, error)
-         CALL H5Aread_f(attr_id, memtype, buf1, dims1, error)
-         CALL H5Aclose_f(attr_id, error)
-      ELSE
-         CALL H5Screate_simple_f(rank, dims1, dataspace_id, error)
-         CALL H5Acreate_f(loc_id, path, memtype, dataspace_id, attr_id, error)
-         CALL H5Awrite_f(attr_id, memtype, buf1, dims1, error)
-         CALL H5Aclose_f(attr_id, error)
-         CALL H5Sclose_f(dataspace_id, error)
-      END IF
-   END IF
-
-   RETURN
-
-   END SUBROUTINE loadsave_integer
-

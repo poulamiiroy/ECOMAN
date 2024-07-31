@@ -49,6 +49,7 @@
 
    !! interval of calculation of the LPO in time      
    INTEGER :: Tinit, Tstep, Tend, OutputStep, tnum, numdt, nt
+   INTEGER :: ncyctot,ncycmax !26062024
    ! time step and file number
    DOUBLE PRECISION :: dt,timesum,dt0,timesum0,timemax,pi,deg2rad,strainmax
    CHARACTER (3) :: dt_to_str
@@ -96,9 +97,12 @@
    DOUBLE PRECISION :: mx1minfab,mx1maxfab,mx2minfab,mx2maxfab,mx3minfab,mx3maxfab !! X1-X2-X3 range for setting fossil fabric
 
    DOUBLE PRECISION, DIMENSION(:), ALLOCATABLE :: mx1,mx2,mx3
+   REAL(4), DIMENSION(:,:,:), ALLOCATABLE :: mx123 !26062024
+   !DOUBLE PRECISION, DIMENSION(:,:,:), ALLOCATABLE :: mx123 !26062024
+   INTEGER(1), DIMENSION(:,:,:), ALLOCATABLE :: mrtYY !26062024
    ! X,Y grid points coordinates 
 
-   DOUBLE PRECISION, DIMENSION(:), ALLOCATABLE :: rho,max_strain,time_max_strain
+   DOUBLE PRECISION, DIMENSION(:), ALLOCATABLE :: rho,max_strain!,time_max_strain
    ! density, cumulative maximum strain
 
    INTEGER, DIMENSION(:), ALLOCATABLE :: rocktype,mYY

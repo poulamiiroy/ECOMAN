@@ -113,7 +113,7 @@
    DO t = Tinit , Tend , Tstep 
 
 !!! Load file with velocity components
-   CALL load(t,input_dir)
+   CALL load(2,t,input_dir)
 
    if ( rankMPI .eq. 1 ) then
       write(*,'(a,i0)') ' CALCULATE LPO FOR FILE NUMBER ',t
@@ -172,10 +172,10 @@
 !  wtime = MPI_Wtime()
 
    ! 2D model forward advection + LPO
-   IF(dimensions == 2) CALL forwardLPOadvection2D
+   IF(dimensions == 2) CALL forwardLPOadvection2D(ncyctot-ncyc+1) !26062024
 
    ! 3D model forward advection + LPO
-   IF(dimensions == 3) CALL forwardLPOadvection3D
+   IF(dimensions == 3) CALL forwardLPOadvection3D(ncyctot-ncyc+1) !26062024
 
    ! Print cycle
    if ( rankMPI .eq. 1 ) then
@@ -267,7 +267,7 @@
 
    IMPLICIT NONE
 
-   INTEGER :: m,rocktype_old
+   INTEGER(1) :: m,rocktype_old
 
    rocktype_old = rocktype(m)
 
@@ -365,7 +365,7 @@
    rankMPI = rankMPI + 1
    !M3E!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-   ncyc = 0 ; ncyc1 = 0
+   ncyc = 1 ; ncyc1 = 0
    call MPI_Barrier(MPI_COMM_WORLD,errMPI)
    wtime0 = MPI_Wtime()
    timeback = 0
@@ -381,7 +381,7 @@
    endif
 
    !Reset cumulated strain and time
-   max_strain = 0.0; time_max_strain = 0.0
+   max_strain = 0.0!; time_max_strain = 0.0
 
    !Main loop
    DO t = Tend, Tinit , -Tstep 
@@ -390,7 +390,7 @@
    wtime1 = MPI_Wtime()
 
 !!! Load file with velocity components
-   CALL load(t,input_dir)
+   CALL load(2,t,input_dir)
 
    IF(Tinit == Tend) THEN
       timeback = timesum + timemax
@@ -419,7 +419,12 @@
          timeback = timeback - dt
       END IF
       if ( rankMPI .eq. 1 ) then
-         write(*,'(a,i0,a)') ' Start cycle ',ncyc,', steady-state flow'
+         if(ncyc > ncycmax) then
+            write(*,'(a,i0,a,i0)') ' ncyc = ',ncyc,' > ncycmax = ',ncycmax
+            !write(*,'(a)') ' increase ncycmax in read_input_file.f90 and recompile'
+            stop
+         end if
+         write(*,'(a,i0,a)') ' Start cycle ',ncyc-1,', steady-state flow'
          write(*,*)
          write(*,'(a,1es13.6,a,1es13.6,a,1es13.6)') '    Starting time = ',timesum,          &
          &                                          ' , Current time = ',timeback,        &
@@ -435,6 +440,11 @@
       IF(numdt > 1 .AND. ndt == numdt) dt = dt0 - (numdt-1)*dt
       timeback = timeback - dt
       if ( rankMPI .eq. 1 ) then
+         if(ncyc > ncycmax) then
+            write(*,'(a,i0,a,i0)') ' ncyc = ',ncyc,' > ncycmax = ',ncycmax
+            !write(*,'(a)') ' increase ncycmax in read_input_file.f90 and recompile'
+            stop
+         end if
          write(*,'(a,1es13.6,a,1es13.6)') '    Timestep = ',dt,' Timesum = ',timeback
          write(*,*)
       endif
@@ -448,15 +458,16 @@
 
    !$omp parallel do & 
    !$omp schedule(guided,8) &
-   !$omp shared(mx1,mx2,X1,X2,Dij,Fd,Fij,e,l,epsnot,odf,odf_ens,acs,acs_ens,rocktype,rho,fractdislrock,max_strain,time_max_strain) &
+   !$omp shared(mx1,mx2,mrtYY,X1,X2,Dij,Fd,Fij,e,l,epsnot,odf,odf_ens,acs,acs_ens,rocktype,rho,fractdislrock,max_strain) &
    !$omp private(tid,m,i1,i2,fractdisl) &    
-   !$omp firstprivate(marknum,dt,size,size3,alt,lambda,Xol,Mob,chi,tau,stressexp,acs0,strainmax) &
+   !$omp firstprivate(marknum,dt,size,size3,alt,lambda,Xol,Mob,chi,tau,stressexp,acs0,strainmax,ncyc) &
    !$omp firstprivate(fsemod,fractdislmod,uppermantlemod,x1min,x2min,x1max,x2max,nx1,nx2)
    DO m = 1 , marknum
  
 !!! Compute LPO/FSE only for aggregates in the domain .OR. for upper mantle aggregates only
 
-      IF(max_strain(m) < strainmax .AND. ((uppermantlemod == 0 .AND. rocktype(m) < 10) .OR. (uppermantlemod > 0 .AND. rocktype(m) == 1))) THEN
+      IF((uppermantlemod == 0 .AND. rocktype(m) < 10) .OR. (uppermantlemod > 0 .AND. rocktype(m) == 1)) THEN
+      !IF(max_strain(m) < strainmax .AND. ((uppermantlemod == 0 .AND. rocktype(m) < 10) .OR. (uppermantlemod > 0 .AND. rocktype(m) == 1))) THEN
 
 !!! Find nearest upper left node
 
@@ -481,7 +492,13 @@
 !!! Update cumulative disl. creep strain and check if higher than threshold strain max
       
          max_strain(m) = max_strain(m) - dt*epsnot(tid)*fractdisl
-         IF(max_strain(m) >= strainmax) time_max_strain(m) = timeback
+         !IF(max_strain(m) >= strainmax) time_max_strain(m) = timeback
+         IF(max_strain(m) >= strainmax) THEN
+            rocktype(m) = rocktype(m) + 100
+            mx123(m,ncyc,1) = REAL(mx1(m))
+            mx123(m,ncyc,2) = REAL(mx2(m))
+            mrtYY(m,ncyc,1) = INT(rocktype(m),1)
+         END IF
 
 50    END IF
 
@@ -491,13 +508,14 @@
 !!! Advection of tracers
    !$omp parallel do &
    !$omp schedule(guided,8) &
-   !$omp shared(mx1,mx2,mYY,X1,X2,Ui,Tk,Pa,Fij,odf,odf_ens,acs0,acs,acs_ens,rocktype,rho,td_rho,max_strain) &
+   !$omp shared(mx1,mx2,mx123,mrtYY,mYY,X1,X2,Ui,Tk,Pa,Fij,odf,odf_ens,acs0,acs,acs_ens,rocktype,rho,td_rho,max_strain) &
    !$omp private(m) &
-   !$omp firstprivate(marknum,dt,size,size3,fabrictransformmod,ptmod,cartspher,Xol,minx2,maxx2,strainmax) &
+   !$omp firstprivate(marknum,dt,size,size3,fabrictransformmod,ptmod,cartspher,Xol,minx2,maxx2,strainmax,ncyc) &
    !$omp firstprivate(invdepthaxis,nx1,nx2,x1min,x2min,x1max,x2max,x1periodic,x2periodic)
    DO m = 1 , marknum
  
-      IF((time_max_strain(m) == timeback .OR. max_strain(m) < strainmax) .AND. rocktype(m) < 100) THEN
+      IF(rocktype(m) < 100) THEN
+      !IF((time_max_strain(m) == timeback .OR. max_strain(m) < strainmax) .AND. rocktype(m) < 100) THEN
 
 !!! Advection of tracers
 
@@ -507,6 +525,11 @@
 
          IF(fabrictransformmod > 0 .AND. rocktype(m)<10) CALL rocktypechange(m)
  
+         mx123(m,ncyc,1) = REAL(mx1(m))
+         mx123(m,ncyc,2) = REAL(mx2(m))
+         !mrtYY(m,ncyc,1) = rocktype(m)
+         mrtYY(m,ncyc,1) = INT(rocktype(m),1)
+
       END IF
 
    END DO
@@ -517,15 +540,16 @@
 
    !$omp parallel do & 
    !$omp schedule(guided,8) &
-   !$omp shared(mx1,mx2,mx3,mYY,X1,X2,X3,Dij,Ui,Fd,epsnot,rocktype,max_strain,time_max_strain) &
+   !$omp shared(mx1,mx2,mx3,mrtYY,mYY,X1,X2,X3,Dij,Ui,Fd,epsnot,rocktype,max_strain) &
    !$omp private(tid,m,i1,i2,i3,fractdisl) &    
-   !$omp firstprivate(marknum,dt,strainmax) &
+   !$omp firstprivate(marknum,dt,strainmax,ncyc) &
    !$omp firstprivate(fsemod,fractdislmod,uppermantlemod,x1min,x2min,x3min,x1max,x2max,x3max,nx1,nx2,nx3)
    DO m = 1 , marknum
 
 !!! Compute LPO/FSE only for aggregates in the domain .OR. for upper mantle aggregates only
 
-      IF(max_strain(m) < strainmax .AND. ((uppermantlemod == 0 .AND. rocktype(m) < 10) .OR. (uppermantlemod > 0 .AND. rocktype(m) == 1))) THEN
+      IF((uppermantlemod == 0 .AND. rocktype(m) < 10) .OR. (uppermantlemod > 0 .AND. rocktype(m) == 1)) THEN
+      !IF(max_strain(m) < strainmax .AND. ((uppermantlemod == 0 .AND. rocktype(m) < 10) .OR. (uppermantlemod > 0 .AND. rocktype(m) == 1))) THEN
 
 !!! Find nearest upper left node
 
@@ -550,7 +574,17 @@
 !!! Update cumulative disl. creep strain and check if higher than threshold strain max
       
          max_strain(m) = max_strain(m) - dt*epsnot(tid)*fractdisl
-         IF(max_strain(m) >= strainmax) time_max_strain(m) = timeback
+         !IF(max_strain(m) >= strainmax) time_max_strain(m) = timeback
+         IF(max_strain(m) >= strainmax) THEN
+            rocktype(m) = rocktype(m) + 100
+            mx123(m,ncyc,1) = REAL(mx1(m))
+            mx123(m,ncyc,2) = REAL(mx2(m))
+            mx123(m,ncyc,3) = REAL(mx3(m))
+            mrtYY(m,ncyc,1) = INT(rocktype(m),1)
+            mrtYY(m,ncyc,2) = INT(mYY(m),1)
+            !mrtYY(m,ncyc,1) = rocktype(m)
+            !mrtYY(m,ncyc,2) = mYY(m)
+         END IF
 
 60    END IF
 
@@ -560,13 +594,14 @@
 !!! Advection of tracers
    !$omp parallel do & 
    !$omp schedule(guided,8) &
-   !$omp shared(mx1,mx2,mx3,mYY,X1,X2,X3,Ui,Tk,Pa,Fij,odf,odf_ens,acs0,acs,acs_ens,rocktype,rho,td_rho,max_strain,time_max_strain) &
+   !$omp shared(mx1,mx2,mx3,mx123,mrtYY,mYY,X1,X2,X3,Ui,Tk,Pa,Fij,odf,odf_ens,acs0,acs,acs_ens,rocktype,rho,td_rho,max_strain) &
    !$omp private(m) &    
-   !$omp firstprivate(marknum,dt,size,size3,fabrictransformmod,ptmod,cartspher,Xol,minx2,maxx2,strainmax) &
+   !$omp firstprivate(marknum,dt,size,size3,fabrictransformmod,ptmod,cartspher,Xol,minx2,maxx2,strainmax,ncyc) &
    !$omp firstprivate(invdepthaxis,nx1,nx2,nx3,x1min,x2min,x3min,x1max,x2max,x3max,x1periodic,x2periodic,x3periodic)
    DO m = 1 , marknum
  
-      IF((time_max_strain(m) == timeback .OR. max_strain(m) < strainmax) .AND. rocktype(m) < 100) THEN
+      IF(rocktype(m) < 100) THEN
+      !IF((time_max_strain(m) == timeback .OR. max_strain(m) < strainmax) .AND. rocktype(m) < 100) THEN
 
 !!! Advection of tracers
 
@@ -576,6 +611,14 @@
       
          IF(fabrictransformmod > 0 .AND. rocktype(m)<10) CALL rocktypechange(m)
  
+         mx123(m,ncyc,1) = REAL(mx1(m))
+         mx123(m,ncyc,2) = REAL(mx2(m))
+         mx123(m,ncyc,3) = REAL(mx3(m))
+         mrtYY(m,ncyc,1) = INT(rocktype(m),1)
+         mrtYY(m,ncyc,2) = INT(mYY(m),1)
+         !mrtYY(m,ncyc,1) = rocktype(m)
+         !mrtYY(m,ncyc,2) = mYY(m)
+
       END IF
 
    END DO
@@ -629,12 +672,14 @@
       write(*,*)
       write(*,'(a,1f10.2,a)') ' BACKWARD ADVECTION OK! (',wtime1,' sec)'
       write(*,*)
-      write(*,'(a,i0)') ' TOTAL NUMBER OF CYCLES: ',ncyc
+      write(*,'(a,i0)') ' TOTAL NUMBER OF CYCLES: ',ncyc-1
       write(*,*)
       write(*,"(a)") '********************************************************'
       write(*,"(a)") '********************************************************'
       write(*,*)
    endif
+
+   ncyctot = ncyc - 1 !26062024
 
    END SUBROUTINE backwardadvectionmain
 
@@ -642,7 +687,7 @@
 !!! Advect forward in time and compute LPO of aggregates
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-   SUBROUTINE forwardLPOadvection2D
+   SUBROUTINE forwardLPOadvection2D(ncyc)
 
    USE comvar
    USE omp_lib
@@ -653,7 +698,7 @@
    include 'mpif.h'
    !M3E!!!!!!!!!!!!
 
-   INTEGER :: i1,i2,m,tid
+   INTEGER :: i1,i2,m,tid,ncyc
    DOUBLE PRECISION :: wtime,fractdisl
    !M3E!!!!!!!!!!!!!!!!!!!!!
    integer :: errMPI,rankMPI
@@ -670,16 +715,21 @@
 
    !$omp parallel do & 
    !$omp schedule(guided,8) &
-   !$omp shared(mx1,mx2,X1,X2,Dij,Ui,Fd,Fij,e,l,epsnot,time_max_strain) &
+   !$omp shared(mx1,mx2,mx123,mrtYY,X1,X2,Dij,Ui,Fd,Fij,e,l,epsnot) &
    !$omp shared(odf,odf_ens,acs,acs_ens,rocktype,rho,fractdislrock) &
    !$omp private(tid,m,i1,i2,fractdisl) &    
-   !$omp firstprivate(marknum,dt,size,size3,alt,lambda,Xol,Mob,chi,tau,stressexp,acs0) &
+   !$omp firstprivate(marknum,dt,size,size3,alt,lambda,Xol,Mob,chi,tau,stressexp,acs0,ncyc) &
    !$omp firstprivate(fsemod,fractdislmod,uppermantlemod,x1min,x2min,x1max,x2max,nx1,nx2)
    DO m = 1 , marknum
  
+      mx1(m) = dble(mx123(m,ncyc,1))
+      mx2(m) = dble(mx123(m,ncyc,2))
+      rocktype(m) = INT(mrtYY(m,ncyc,1))
+
 !!! Compute LPO/FSE only for aggregates in the domain .OR. for upper mantle aggregates only
 
-      IF(timesum >= time_max_strain(m) .AND. ((uppermantlemod == 0 .AND. rocktype(m) < 10) .OR. (uppermantlemod > 0 .AND. rocktype(m) == 1))) THEN
+      IF((uppermantlemod == 0 .AND. rocktype(m) < 10) .OR. (uppermantlemod > 0 .AND. rocktype(m) == 1)) THEN
+      !IF(timesum >= time_max_strain(m) .AND. ((uppermantlemod == 0 .AND. rocktype(m) < 10) .OR. (uppermantlemod > 0 .AND. rocktype(m) == 1))) THEN
 
 !!! Find nearest upper left node
 
@@ -718,39 +768,6 @@
       write(*,*)
    endif
 
-   call MPI_Barrier(MPI_COMM_WORLD,errMPI)
-   wtime = MPI_Wtime()
-
-!!! Advection of aggregates
-   !$omp parallel do & 
-   !$omp schedule(guided,8) &
-   !$omp shared(mx1,mx2,X1,X2,Ui,Fij,odf,odf_ens,acs,acs_ens,rocktype,rho,td_rho,Tk,Pa,time_max_strain) &
-   !$omp private(m) &    
-   !$omp firstprivate(marknum,dt,size,size3,fabrictransformmod,ptmod,cartspher,Xol,minx2,maxx2) &
-   !$omp firstprivate(invdepthaxis,nx1,nx2,x1min,x2min,x1max,x2max,x1periodic,x2periodic,acs0)
-   DO m = 1 , marknum
- 
-      IF(timesum >= time_max_strain(m) .AND. rocktype(m) < 100) THEN
-
-         CALL advection2D(m)
-
-!!! Aggregate transformation
-      
-         IF(fabrictransformmod > 0 .AND. rocktype(m)<10) CALL rocktypechange(m)
- 
-      END IF
-
-   END DO
-   !$omp end parallel do
-
-   call MPI_Barrier(MPI_COMM_WORLD,errMPI)
-   wtime = MPI_Wtime() - wtime
-
-   if ( rankMPI .eq. 1 ) then
-      write(*,'(a,1f8.2,a)') '    2D Advection ok (',wtime,' sec)'
-      write(*,*)
-   endif
-
    RETURN
 
    END SUBROUTINE forwardLPOadvection2D
@@ -759,7 +776,7 @@
 !!! Advect forward in time and compute LPO of aggregates
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-   SUBROUTINE forwardLPOadvection3D
+   SUBROUTINE forwardLPOadvection3D(ncyc)
 
    USE comvar
    USE omp_lib
@@ -770,7 +787,7 @@
    include 'mpif.h'
    !M3E!!!!!!!!!!!!
 
-   INTEGER :: i1,i2,i3,m,tid
+   INTEGER :: i1,i2,i3,m,tid,ncyc
    DOUBLE PRECISION :: wtime,fractdisl
    !M3E!!!!!!!!!!!!!!!!!!!!!
    integer :: errMPI,rankMPI
@@ -787,16 +804,23 @@
 
    !$omp parallel do & 
    !$omp schedule(guided,8) &
-   !$omp shared(mx1,mx2,mx3,mYY,X1,X2,X3,Dij,Ui,Fd,Fij,e,l,epsnot,time_max_strain) &
+   !$omp shared(mx1,mx2,mx3,mx123,mrtYY,mYY,X1,X2,X3,Dij,Ui,Fd,Fij,e,l,epsnot) &
    !$omp shared(odf,odf_ens,acs,acs_ens,rocktype,rho,fractdislrock) &
    !$omp private(tid,m,i1,i2,i3,fractdisl) &    
-   !$omp firstprivate(marknum,timesum,dt,size,size3,alt,lambda,Xol,Mob,chi,tau,stressexp,acs0) &
+   !$omp firstprivate(marknum,timesum,dt,size,size3,alt,lambda,Xol,Mob,chi,tau,stressexp,acs0,ncyc) &
    !$omp firstprivate(fsemod,fractdislmod,uppermantlemod,x1min,x2min,x3min,x1max,x2max,x3max,nx1,nx2,nx3)
    DO m = 1 , marknum
 
+      mx1(m) = dble(mx123(m,ncyc,1))
+      mx2(m) = dble(mx123(m,ncyc,2))
+      mx3(m) = dble(mx123(m,ncyc,3))
+      rocktype(m) = int(mrtYY(m,ncyc,1))
+      mYY(m) = int(mrtYY(m,ncyc,2))
+
 !!! Compute LPO/FSE only for aggregates in the domain .OR. for upper mantle aggregates only
 
-      IF(timesum >= time_max_strain(m) .AND. ((uppermantlemod == 0 .AND. rocktype(m) < 10) .OR. (uppermantlemod > 0 .AND. rocktype(m) == 1))) THEN
+      IF((uppermantlemod == 0 .AND. rocktype(m) < 10) .OR. (uppermantlemod > 0 .AND. rocktype(m) == 1)) THEN
+      !IF(timesum >= time_max_strain(m) .AND. ((uppermantlemod == 0 .AND. rocktype(m) < 10) .OR. (uppermantlemod > 0 .AND. rocktype(m) == 1))) THEN
 
 !!! Find nearest upper left node
 
@@ -834,39 +858,6 @@
       write(*,*)
    endif
 
-   call MPI_Barrier(MPI_COMM_WORLD,errMPI)
-   wtime = MPI_Wtime()
-
-!!! Advection of aggregates
-   !$omp parallel do & 
-   !$omp schedule(guided,8) &
-   !$omp shared(mx1,mx2,mx3,mYY,X1,X2,X3,Ui,Tk,Pa,Fij,odf,odf_ens,acs0,acs,acs_ens,rocktype,rho,td_rho,time_max_strain) &
-   !$omp private(m) &    
-   !$omp firstprivate(marknum,timesum,dt,size,size3,fabrictransformmod,ptmod,cartspher,Xol,minx2,maxx2) &
-   !$omp firstprivate(invdepthaxis,nx1,nx2,nx3,x1min,x2min,x3min,x1max,x2max,x3max,x1periodic,x2periodic,x3periodic)
-   DO m = 1 , marknum
-
-      IF(timesum >= time_max_strain(m) .AND. rocktype(m) < 100) THEN
-
-         CALL advection(m)
-
-!!! Aggregate transformation
-
-         IF(fabrictransformmod > 0 .AND. rocktype(m)<10) CALL rocktypechange(m)
-
-      END IF
-
-   END DO
-   !$omp end parallel do
- 
-   call MPI_Barrier(MPI_COMM_WORLD,errMPI)
-   wtime = MPI_Wtime() - wtime
-   if ( rankMPI .eq. 1 ) then
-      write(*,'(a,1f8.2,a)') '    3D Advection ok (',wtime,' sec)'
-      write(*,*)
-   endif
-
    RETURN
 
    END SUBROUTINE forwardLPOadvection3D
-

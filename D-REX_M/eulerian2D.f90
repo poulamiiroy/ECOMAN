@@ -526,8 +526,8 @@
 
    !Orthogonal motion of external aggregates
    IF(rocktype(m) < 10) THEN
-      IF(mx1(m)+dx < x1min .OR. mx1(m)+dx > x1max) dy = 0
-      IF(mx2(m)+dy < x2min .OR. mx2(m)+dy > x2max) dx = 0
+      IF(x1periodic .EQ. 0 .AND. (mx1(m)+dx < x1min .OR. mx1(m)+dx > x1max)) dy = 0
+      IF(x2periodic .EQ. 0 .AND. (mx2(m)+dy < x2min .OR. mx2(m)+dy > x2max)) dx = 0
    END IF
    IF(rocktype(m) > 10) THEN
       IF(mx1(m) < x1min .OR. mx1(m) > x1max) dy = 0

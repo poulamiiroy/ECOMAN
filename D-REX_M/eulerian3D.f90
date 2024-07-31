@@ -304,6 +304,10 @@
    yy = (X2s-X2(i2s))/(X2(i2s+1)-X2(i2s))
    zz = (X3s-X3(i3s))/(X3(i3s+1)-X3(i3s))
 
+   if(xx < 0) xx = 0; if(xx > 1.0d0) xx = 1.0d0
+   if(yy < 0) yy = 0; if(yy > 1.0d0) yy = 1.0d0
+   if(zz < 0) zz = 0; if(zz > 1.0d0) zz = 1.0d0
+
    res = (1d0-xx)*(1d0-yy)*(1d0-zz)*y1 &
               +xx*(1d0-yy)*(1d0-zz)*y2 &
                     +xx*(1d0-yy)*zz*y3 &
@@ -805,7 +809,10 @@
 
    IMPLICIT NONE
 
+   include 'mpif.h'
+
    INTEGER :: m,i1,i2,i3,yy
+   INTEGER :: rankMPI,errMPI
    ! indices of the closest upper-left grid point
 
    DOUBLE PRECISION :: X1i,X2i,X3i,U1i,U2i,U3i,lr,cr
@@ -816,12 +823,11 @@
    DOUBLE PRECISION :: kz1,kz2,kz3,kz4,dz
    ! RGK intermediate for streamlines calculation 
 
-   ! value of the dimensionless strain for which any former
-   ! LPO has been erased. From Kaminski and Ribe 2002, 10
-   ! is a safe value. Should be tested for a given flow though.
+   ! Get MPI info
+   call MPI_COMM_RANK(MPI_COMM_WORLD,rankMPI,errMPI)
+   rankMPI = rankMPI + 1
 
-
-!!! X PERIODIC MUST BE TAKEN INTO ACCOUNT
+   !call MPI_Barrier(MPI_COMM_WORLD,errMPI)
 
    X1i = mx1(m) ; X2i = mx2(m) ; X3i = mx3(m)
 
@@ -840,21 +846,8 @@
       
    !!! Check for periodicity along x1
    IF(x1periodic > 0) THEN
-      IF(cartspher == 2) THEN
-         !Check if colat is < 0°
-         IF(X1i < x1min) THEN
-            X1i = - X1i
-            X2i = X2i + pi
-         END IF
-         !Check if colat is > 90°
-         IF(X1i > x1max) THEN
-            X1i = 2*pi - X1i
-            X2i = X2i + pi
-         END IF
-      ELSE
-         IF(X1i < x1min) X1i = x1max + X1i - x1min
-         IF(X1i > x1max) X1i = x1min - X1i - x1max
-      END IF
+      IF(X1i < x1min) X1i = x1max + X1i - x1min
+      IF(X1i > x1max) X1i = x1min - X1i - x1max
    ELSE
       !IF(X1i < x1min) X1i = x1min ; IF (X1i > x1max) X1i = x1max
    END IF
@@ -891,21 +884,8 @@
       
    !!! Check for periodicity along x1
    IF(x1periodic > 0) THEN
-      IF(cartspher == 2) THEN
-         !Check if colat is < 0°
-         IF(X1i < x1min) THEN
-            X1i = - X1i
-            X2i = X2i + pi
-         END IF
-         !Check if colat is > 90°
-         IF(X1i > x1max) THEN
-            X1i = 2*pi - X1i
-            X2i = X2i + pi
-         END IF
-      ELSE
-         IF(X1i < x1min) X1i = x1max + X1i - x1min
-         IF(X1i > x1max) X1i = x1min - X1i - x1max
-      END IF
+      IF(X1i < x1min) X1i = x1max + X1i - x1min
+      IF(X1i > x1max) X1i = x1min - X1i - x1max
    ELSE
       !IF(X1i < x1min) X1i = x1min ; IF (X1i > x1max) X1i = x1max
    END IF
@@ -942,21 +922,8 @@
       
    !!! Check for periodicity along x1
    IF(x1periodic > 0) THEN
-      IF(cartspher == 2) THEN
-         !Check if colat is < 0°
-         IF(X1i < x1min) THEN
-            X1i = - X1i
-            X2i = X2i + pi
-         END IF
-         !Check if colat is > 90°
-         IF(X1i > x1max) THEN
-            X1i = 2*pi - X1i
-            X2i = X2i + pi
-         END IF
-      ELSE
-         IF(X1i < x1min) X1i = x1max + X1i - x1min
-         IF(X1i > x1max) X1i = x1min - X1i - x1max
-      END IF
+      IF(X1i < x1min) X1i = x1max + X1i - x1min
+      IF(X1i > x1max) X1i = x1min - X1i - x1max
    ELSE
       !IF(X1i < x1min) X1i = x1min ; IF (X1i > x1max) X1i = x1max
    END IF
@@ -988,10 +955,40 @@
    dy = (ky1/2d0+ky2+ky3+ky4/2d0)/3d0
    dz = (kz1/2d0+kz2+kz3+kz4/2d0)/3d0
 
+   !Orthogonal motion of external aggregates (but not for YY grid)
+   IF(yinyang == 1) THEN
+
+   IF(rocktype(m) < 10) THEN
+      IF(x1periodic .EQ. 0 .AND. (mx1(m)+dx < x1min .OR. mx1(m)+dx > x1max)) THEN
+         dy = 0
+         dz = 0
+      ELSE IF(x2periodic .EQ. 0 .AND. (mx2(m)+dy < x2min .OR. mx2(m)+dy > x2max)) THEN
+         dx = 0
+         dz = 0
+      ELSE IF(x3periodic .EQ. 0 .AND. (mx3(m)+dz < x3min .OR. mx3(m)+dz > x3max)) THEN
+         dx = 0
+         dy = 0
+      END IF
+   END IF
+   IF(rocktype(m) > 10) THEN
+      IF(mx1(m) < x1min .OR. mx1(m) > x1max) THEN
+         dy = 0
+         dz = 0
+      ELSE IF(mx2(m) < x2min .OR. mx2(m) > x2max) THEN
+         dx = 0
+         dz = 0
+      ELSE IF(mx3(m) < x3min .OR. mx3(m) > x3max) THEN
+         dx = 0
+         dy = 0
+      END IF
+   END IF
+
+   END IF
+
    mx1(m) = mx1(m) + dx
    mx2(m) = mx2(m) + dy
    mx3(m) = mx3(m) + dz
-
+    
    !Change rocktype to compute (< 10 ) or not ( > 10) the LPO and FSE for aggregates that, respectively, enter or leave the domain
    IF(rocktype(m) < 10) THEN
 
@@ -1014,21 +1011,8 @@
 
       !!! Check for periodicity along x1
       IF(x1periodic > 0) THEN
-         IF(cartspher == 2) THEN
-            !Check if colat is < 0°
-            IF(mx1(m) < x1min) THEN
-               mx1(m) = - mx1(m)
-               mx2(m) = mx2(m) + pi
-            END IF
-            !Check if colat is > 90°
-            IF(mx1(m) > x1max) THEN
-               mx1(m) = 2*pi - mx1(m)
-               mx2(m) = mx2(m) + pi
-            END IF
-         ELSE
-            IF(mx1(m) < x1min) mx1(m) = x1max + mx1(m) - x1min
-            IF(mx1(m) > x1max) mx1(m) = x1min + mx1(m) - x1max
-         END IF
+         IF(mx1(m) < x1min) mx1(m) = x1max + mx1(m) - x1min
+         IF(mx1(m) > x1max) mx1(m) = x1min + mx1(m) - x1max
       ELSE
          IF(mx1(m) < x1min .OR. mx1(m) > x1max) rocktype(m) = rocktype(m) + 10
       END IF

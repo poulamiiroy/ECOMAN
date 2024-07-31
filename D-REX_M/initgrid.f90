@@ -58,7 +58,7 @@
 
    IMPLICIT NONE
 
-   INTEGER :: i1,i2,i3,i,j,gi,j1,j2,j3,m,ptmod0,ptnum,yy,marknum00 ! loop counters
+   INTEGER :: i1,i2,i3,i,j,gi,j1,j2,j3,m,ptmod0,ptnum,yy,marknum00,t ! loop counters
    INTEGER :: iph,ith,ips,nbox
 
    ! matrix of random numbers used to generate initial random LPO
@@ -198,7 +198,7 @@
    END IF
 
    !Check if LPO parameters are defined correctly
-   DO i=1,4
+   DO i=1,5
 
       IF(Xol(i) < 0 .OR. Xol(i) > 100d0) THEN
          print *,'Wrong volume fraction of main phase for rocktype ',i,', it should be >= 0 and <= 1 '
@@ -282,6 +282,24 @@
       X3(i3) = X3(i3-1) + x3stp   
    END DO  
    
+   call MPI_Barrier(MPI_COMM_WORLD,errMPI)
+
+   ncycmax = 0
+   DO t = Tinit , Tend , Tstep 
+
+!!! Load file with velocity components
+      CALL load(0,t,input_dir)
+      
+      ncycmax = ncycmax + numdt
+
+   END DO
+   ncycmax = ncycmax + 1 !add 1 cycle to save initial setup
+
+   if ( rankMPI .eq. 1 ) then
+      write(*,'(a,i13)') ' TOTAL NUMBER OF CYCLES FOR THE RUN + INITIAL SETUP = ',ncycmax !NINT(timemax/dt)
+      write(*,*)
+   endif
+
 !!! Initialization of the Lagrangian grid with crystal aggregates
 
    ! Calculate number of aggregates for array/matrix memory allocation
@@ -301,10 +319,13 @@
    write(*,'(a,i0,a,i0)') ' Number of aggregates in the domain = ',marknum,' | rank: ',rankMPI
 
    ALLOCATE(mx1(marknum),mx2(marknum),mx3(marknum),mYY(marknum),rocktype(marknum),rho(marknum))
-   ALLOCATE(max_strain(marknum),time_max_strain(marknum))
+   ALLOCATE(mx123(marknum,ncycmax,3),mrtYY(marknum,ncycmax,2)) !26062024
+   ALLOCATE(max_strain(marknum))
+   !ALLOCATE(max_strain(marknum),time_max_strain(marknum))
    ALLOCATE(Fij(3,3,marknum))
 
-   memmark = marknum*16 !rocktype and mYY are INT (4 bytes) and thus together amount to one 8 bytes array
+   memmark = marknum*(15 + ncycmax*2.5d0) !mx123 and mrtYY are REAL (4 bytes), rocktype and mYY are INT (4 bytes)
+   !memmark = marknum*16 !rocktype and mYY are INT (4 bytes) and thus together amount to one 8 bytes array
    !Account for Sav and Xsave
    IF(fsemod == 0 .OR. sbfmod > 0) THEN
       memmark = memmark + marknum*(36 + 21)
@@ -313,7 +334,8 @@
 
 !!! Initialize arrays
    mx1 = 0d0 ; mx2 = 0d0 ; mx3 = 0d0 ; mYY = 1 ; rocktype = 1 ; rho = 0d0
-   max_strain = 0d0; time_max_strain = -1.0d60
+   mx123 = 0d0; mrtYY = 0d0
+   max_strain = 0d0; !time_max_strain = -1.0d60
 
 !!! Initial deformation gradient tensor
    Fij = 0d0 ; Fij(1,1,:) = 1d0 ; Fij(2,2,:) = 1d0 ; Fij(3,3,:) = 1d0
@@ -565,18 +587,19 @@
    END IF
 
 !!! Set initial rocktype
-   ptmod0 = ptmod
-   ptmod = 1
+
+   !Load initial P-T fields
+   IF(ptmod > 1) CALL load(1,Tend,input_dir)
    DO m = 1, marknum
 
       CALL rocktypecheck(m)
 
    END DO
-   ptmod = ptmod0
 
    END IF
+   !end of IF(fsemod == 0 .OR. sbfmod > 0) THEN
 
-   !Delete markers of YANG gridi overlapping with YIN grid
+   !Delete markers of YANG grid overlapping with YIN grid
    IF(yy == 2) THEN
 
      DO m=1,marknum
@@ -589,15 +612,24 @@
 
    END IF
 
+   !Save initial setup
+   DO m=1,marknum
+       mx123(m,1,1) = mx1(m)
+       mx123(m,1,2) = mx2(m)
+       mx123(m,1,3) = mx3(m)
+       mrtYY(m,1,1) = rocktype(m)
+       mrtYY(m,1,2) = mYY(m)
+   END DO
+
    if ( rankMPI .eq. 1 ) then
       write(*,*)
-      write(*,'(a,1f6.2,a)') ' Memory needed for nodes is ',memnodes*8*sizeMPI/1d9,' GB'
+      write(*,'(a,1f6.2,a,1f6.2,a)') ' Total memory needed for Eulerian grid is ',memnodes*8*sizeMPI/1d9,' GB, of which ',memnodes*8/1d9,' per CPU node'
   
       write(*,*)
-      write(*,'(a,1f6.2,a)') ' Memory needed for aggregates is ',((memmark-1)*8+1)*sizeMPI/1d9,' GB'
+      write(*,'(a,1f6.2,a,1f6.2,a)') ' Total memory needed for crystal aggregates is ',((memmark-1)*8+1)*sizeMPI/1d9,' GB, of which ',((memmark-1)*8+1)/1d9,' per CPU node'
       ! Add 5% to account for other variables declared
       write(*,*)
-      write(*,'(a,1f6.2,a)') ' Total memory needed is about ',((memnodes+memmark)*8*sizeMPI/1d9)*1.05d0, ' GB'
+      write(*,'(a,1f6.2,a,1f6.2,a)') ' Total memory needed is about ',((memnodes+memmark)*8*sizeMPI/1d9)*1.05d0, ' GB, of which ',((memnodes+memmark)*8/1d9)*1.05d0,' per CPU node'
       write(*,*)
    endif
 
